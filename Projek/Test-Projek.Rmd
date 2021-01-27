@@ -1,0 +1,144 @@
+---
+title: "Test Projek"
+author: "Rifka Canalisa Rahayu"
+date: "1/12/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Projek Penilaian Pariwisata
+
+## Library
+```{r}
+library(xml2)
+library(rvest)
+library(ggplot2)
+library(dplyr)
+library(dslabs)
+library(tidyverse)
+```
+
+
+```{r}
+alamatweb <-'https://www.tripadvisor.com/Attraction_Review-g186338-d187555-Reviews-The_British_Museum-London_England.html'
+lamanweb <- read_html(alamatweb)
+```
+
+# Judul review
+```{r}
+title_data_laman <- html_nodes(lamanweb,'.ocfR3SKN span span') 
+title_data <- html_text(title_data_laman)
+title_data <- as.character(title_data)
+head(title_data)
+```
+
+# rating review
+```{r}
+rating_data_laman <- html_nodes(lamanweb,'.nf9vGX55') 
+print(rating_data_laman)
+rating_data <- gsub("\\D+", "", rating_data_laman)
+rating_data <- substr(rating_data, 4, 4)
+rating_data <- as.numeric(rating_data)
+print(rating_data)
+```
+
+# Comment/Isi review
+```{r}
+comment_data_laman <- html_nodes(lamanweb,'.cPQsENeY q') 
+comment_data <- html_text(comment_data_laman)
+comment_data <- as.character(comment_data)
+print(comment_data)
+
+```
+
+# Date Trip
+```{r}
+date_trip_laman <- html_nodes(lamanweb, '._34Xs-BQm ')
+date_trip <- html_text(date_trip_laman)
+date_trip <- substring(date_trip,21)
+date_trip <- as.vector(date_trip)
+print(date_trip)
+```
+
+# Reviewer Username
+```{r}
+user_laman <- html_nodes(lamanweb, '._2fxQ4TOx a ')
+user <- html_text(user_laman)
+user <- as.character(user)
+print(user)
+```
+
+# Day write review
+```{r}
+day_laman <- html_nodes(lamanweb, '._2fxQ4TOx span ')
+day <- html_text(day_laman)
+day <- gsub("([^:]+). ([review])", "", day)
+day <- substring(day, 7)
+day <- as.vector(day)
+print(day)
+```
+
+
+```{r}
+data_review_museum <- data.frame(title = title_data, comment = comment_data, trip = date_trip, writer = user, 
+                                 written = day, rating = rating_data)
+str(data_review_museum)
+```
+data_review_museum <- data.frame(title = title_data, comment = comment_data, rating = rating_data)
+
+```{r}
+jumlah = 2500
+
+if(jumlah > 5){
+  if(jumlah %% 5 !=0){
+    banyak_data = jumlah + (5 - (jumlah %% 5)) - 5
+  } else{
+    banyak_data = jumlah - 5
+  }
+  for (i in seq(from <- 5, to <- banyak_data, by = 5)){
+   
+      link = paste0("https://www.tripadvisor.com/Attraction_Review-g186338-d187555-Reviews-or",
+                 i,"-The_British_Museum-London_England.html#REVIEWS")
+      page = read_html(link)
+      
+      titles_data <- page %>% html_nodes('.ocfR3SKN span span') %>% html_text() 
+      titles_data <- as.character(titles_data)
+      
+      comments_data <- page %>% html_nodes('.cPQsENeY q') %>% html_text() 
+      comment_datas <- as.character(comments_data)
+      
+      users_data <- page %>% html_nodes('._2fxQ4TOx a ') %>% html_text()
+      users_datas <- as.character(users_data)
+      
+      date_trips <- page %>% html_nodes('._34Xs-BQm ') %>% html_text()
+      date_data <-  date_trips %>% substring(21) %>% as.vector()
+      
+      rates_data <- page %>% html_nodes('.nf9vGX55')
+      rating_datas <- gsub("\\D+", "", rates_data) 
+      rate_datas <- rating_datas %>% substr(4, 4) %>% as.numeric()
+      
+      days_data <- page %>% html_nodes('._2fxQ4TOx span ') %>% html_text()
+      write_data <- gsub("([^:]+). ([review])", "", days_data)
+      written_data <- write_data %>% substring(7) %>% as.vector()
+      
+      data_review_museum <- rbind(data_review_museum, 
+                                  data.frame(title = titles_data, comment = comment_datas,  trip = date_data,
+                                             writer = users_datas, written = written_data, rating = rate_datas ))
+  }
+}
+
+
+```
+
+```{r}
+str(data_review_museum)
+tail(data_review_museum)
+```
+```{r}
+write.csv(data_review_museum ,"Data_Review_British_Museum.csv",row.names = F, fileEncoding = "UTF-8")
+getwd()
+```
+

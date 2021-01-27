@@ -1,0 +1,362 @@
+---
+title: "Sentiment Analisis"
+author: "Rifka Canalisa Rahayu"
+date: "1/24/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Sentimen Analisis
+## library
+```{r}
+library(tidyverse)
+library(tidytext)
+library(tidymodels)
+library(dslabs)
+library(ggplot2)
+library(vroom)
+library(here)
+library(wordcloud)
+library(RColorBrewer)
+library(Rstem)
+library(sentiment)
+library(reshape2)
+```
+
+```{r}
+dataReview <- vroom(here("Data_Review_British_Museum.csv"))
+glimpse(dataReview)
+```
+## Cleaned Data
+```{r}
+tidyReview <- dataReview$comment
+
+tidyReview <- tolower(tidyReview)
+tidyReview <- gsub("[[:punct:]]","", tidyReview)
+tidyReview <- gsub("\\d+","", tidyReview)
+
+tidyData <- dataReview %>%
+  select(title, writer, written, rating) %>%
+  mutate(comment = tidyReview)
+head(tidyData)
+
+#comment <- tidyData$comment
+#datframe <- data.frame(comment)
+write.csv(tidyData, file = "data_clean.csv")
+```
+
+## clean data 2
+banyak_data diisi oleh pengguna ato default
+```{r}
+#banyak_d <- ifelse(input_data == "", input$data, input$data)
+banyak_d <- NULL #contoh buat klo slider ga di geser
+if(is.null(banyak_d)){
+  banyak_data <- nrow(tidyData)
+} else {
+  banyak_data <- banyak_d
+}
+
+tidy_review <- tidyData[c(1:banyak_data), ] %>%
+  filter(comment != "nan") %>%
+  unnest_tokens(word, comment) %>%
+  anti_join(stop_words)
+
+glimpse(tidy_review)
+
+```
+
+
+# sentiment analisis
+## Library
+```{r}
+library(e1071)
+library(caret)
+library(syuzhet)
+library(RTextTools)
+library(tm)
+```
+## menggunakan algoritma bayes
+```{r}
+text <- tidy_review$word
+emo_class <- classify_emotion(text, algorithm = "bayes", prior=1.0)
+emo <- emo_class[,7]
+emo[is.na(emo)] <- "unknown"
+
+new_data <- tidy_review %>%
+  mutate(sentiment_bayes = emo)
+glimpse(new_data)
+
+write.csv(new_data, "data_sentiment_emo.csv")
+```
+## menggunakan get_nrc
+```{r}
+text <- as.character(text)
+senti <- get_nrc_sentiment(text)
+
+```
+
+```{r}
+nrc_data <- cbind(text, senti)
+glimpse(nrc_data)
+write.csv(nrc_data, "data_sentiment_nrc.csv")
+```
+## menggunakan join nrc
+```{r}
+nrc_n <- inner_join(tidy_review, get_sentiments("nrc"), by = "word")
+
+glimpse(nrc_n)
+write.csv(nrc_n, "data_sentiment_nrc2.csv")
+```
+## menggunakan Naive bayes untuk Positive dan Negative
+```{r}
+datanya <- read.csv("data_clean.csv")
+glimpse(datanya)
+datanya <- datanya %>%
+  select(comment, rating)
+
+# menambahkan kelas baru dengan persyaratan rating lebih dari 3 maka bernilai 1 atau good
+datanya <- datanya %>% mutate(kelas = ifelse(rating>=3, "1", "0"))
+
+# mengubah rating dan kelas menjadi faktor
+datanya$rating <- as.factor(datanya$rating)
+datanya$kelas <- as.factor(datanya$kelas)
+
+set.seed(18940)
+datanya <- datanya[sample(nrow(datanya)),]
+datanya <- datanya[sample(nrow(datanya)),]
+glimpse(datanya)
+```
+
+```{r}
+corpus <- Corpus(VectorSource(datanya$comment))
+corpus
+inspect(corpus[1:10])
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeWords, stopwords(kind = "en")) %>%
+  tm_map(stripWhitespace)
+
+dtm <- DocumentTermMatrix(corpus_clean)
+inspect(dtm[1:10, 1:10])
+```
+
+```{r}
+data_split <- initial_split(datanya)
+data_split
+
+data_train <- datanya[1:1868,]
+data_test <- datanya[1869:2490,]
+
+dtm_train <- dtm[1:1868,]
+dtm_test <- dtm[1869:2490,]
+
+# cc = corpus clean
+cc_train <- corpus_clean[1:1868]
+cc_test <- corpus_clean[1869:2490]
+```
+
+```{r}
+dim(dtm_train)
+
+# menyeleksi feature sehingga yg diambil adalah kata yang muncul setidaknya 75 kali
+rungpuluh_freq <- findFreqTerms(dtm_train,75)
+length(rungpuluh_freq)
+saveRDS(rungpuluh_freq, "fitur.rds")
+
+# menyesuaikan fitur pada data train dan test dengan fitur yg sudah diseleksi
+dtm_train_a <- cc_train %>%
+  DocumentTermMatrix(control = list(dictionary = rungpuluh_freq))
+
+dtm_test_a <- cc_test %>%
+  DocumentTermMatrix(control = list(dictionary = rungpuluh_freq))
+
+dim(dtm_train_a)
+dim(dtm_test_a)
+```
+```{r}
+# fungsi untuk mengubah nilai 0 dan 1 menjadi no dan yes
+ngubah <- function(x) {
+  y <- ifelse(x>0, 1, 0)
+  y <- factor(y, levels = c(0,1), labels = c("No","Yes"))
+  y
+}
+
+train_b <- apply(dtm_train_a, 2, ngubah)
+test_b <- apply(dtm_test_a, 2, ngubah)
+
+glimpse(train_b)
+length(train_b)
+```
+## pemodelan Naive bayes dengan menggunakan RATING sebagai acuan
+```{r}
+# membuat model naive bayes
+classifier <- naiveBayes(train_b, data_train$rating, laplace = 1)
+
+# menyimpan model untuk aplikasi
+save(classifier, file = "NaiveBayesClassifier.rda")
+
+# test model naive bayes
+prediksi <- predict(classifier, test_b)
+
+# membuat tabel hasil prediksi
+table("Prediksi" = prediksi, "Asli" = data_test$rating)
+
+# mengecek akurasi
+conf <- confusionMatrix(prediksi, data_test$rating)
+conf$overall['Accuracy']
+```
+## pemodelan Naive bayes dengan menggunakan Kelas sebagai acuan
+```{r}
+# membuat model naive bayes
+classifier2 <- naiveBayes(train_b, data_train$kelas, laplace = 1)
+
+# menyimpan model untuk aplikasi
+save(classifier2, file = "NaiveBayesClassifier2.rda")
+
+# test model naive bayes
+prediksi2 <- predict(classifier2, test_b)
+
+# membuat tabel hasil prediksi
+table("Prediksi" = prediksi2, "Asli" = data_test$kelas)
+
+# mengecek akurasi
+conf2 <- confusionMatrix(prediksi2, data_test$kelas)
+conf2$overall['Accuracy']
+```
+
+## visualisasi Sentiment analisis
+```{r}
+new_data %>% 
+  count(sentiment_bayes) %>%
+  ggplot(aes(sentiment_bayes, n, fill = sentiment_bayes)) + 
+  geom_col(show.legend = FALSE) + 
+  labs(x = NULL, y = "Sentiment Analisis",
+       title = "Grafik Sentimen Analisis", subtitle = "Menggunakan naive bayes") +
+  coord_flip()
+
+barplot(colSums(senti), col = rainbow(10), ylab = 'count', main='Sentiment Analisis')
+
+nrc_n %>% 
+  mutate(sentiment = reorder(sentiment,n)) %>%
+  ggplot(aes(sentiment, n, fill = sentiment)) + 
+  geom_col(show.legend = FALSE) + 
+  labs(x = NULL, y = "Sentiment Analisis",
+       title = "Grafik Sentimen Analisis", subtitle = "Menggunakan join nrc") +
+  coord_flip()
+```
+
+# Sisa dibawah tu yg klo mau dipake + visualisasi yg ga jadi dipake
+```
+reviews_nrc <- tidy_review %>% 
+  inner_join(get_sentiments("nrc")) %>%
+  group_by(writer) %>%
+  count(sentiment, sort = TRUE) %>%
+  spread(sentiment, n, fill = 0) %>%
+  ungroup()
+reviews_nrc
+
+```
+
+```
+bing_n <- tidy_review %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(sentiment, sort = TRUE)
+bing_n
+
+bing_n %>% 
+  mutate(sentiment = reorder(sentiment,n)) %>%
+  ggplot(aes(sentiment, n, fill = sentiment)) + 
+  geom_col(show.legend = FALSE) + 
+  labs(x = NULL, y = "Sentiment Analisis") 
+```
+
+```
+bing_word_counts <- tidy_review %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(sentiment, word, sort = TRUE)
+bing_word_counts
+
+nrc_word_counts <- tidy_review %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(sentiment, word, sort = TRUE)
+nrc_word_counts
+```
+
+```
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+
+# top_n boleh diganti -> saran terbaik 10 word aja
+```
+
+```
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(5) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+# top_n boleh diganti -> saran terbaik 5 word aja
+```
+
+```
+tidy_review %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100, colors = brewer.pal(12, "Paired")))
+
+# colors + max.word boleh diganti
+```
+
+```
+tidy_review %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0 ) %>%
+  comparison.cloud(colors = brewer.pal(2, 'Paired'), max.words = 100) 
+# colors + max.word boleh diganti
+```
+
+gagal
+```
+tidy_review %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0 ) %>%
+  comparison.cloud(colors = brewer.pal(10, 'Paired'), max.words = 20)
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
